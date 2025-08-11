@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
-<title>Forklift Surfer 3D (Starter)</title>
+<title>Forklift Surfer 3D — Plus</title>
 <style>
   :root { color-scheme: dark; --bg:#0b0f15; --panel:#121826; --muted:#8aa0c0; --accent:#00d084; }
   html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif}
@@ -46,6 +46,9 @@
 
 <script type="module">
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+import { EffectComposer } from "https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "https://unpkg.com/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js";
 
 const hud = {
   score: document.getElementById('scoreV'),
@@ -58,37 +61,64 @@ const overlay = document.getElementById('overlay');
 const playBtn = document.getElementById('playBtn');
 const toast = document.getElementById('toast');
 
+const BLOOM_LAYER = 1;
+
 // ---------- Renderer / Scene / Camera ----------
 const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setSize(innerWidth, innerHeight);
 renderer.setClearColor(0x0b0f15, 1);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x0b0f15, 0.06);
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 200);
-camera.position.set(0, 4.2, 8);
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 200);
+const camRig = new THREE.Group();        // smooth follow rig
+camRig.position.set(0, 4.5, 10);         // starting cam base
+scene.add(camRig);
+camRig.add(camera);
 camera.lookAt(0, 1.5, -4);
 
+// Post FX
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.6, 0.9, 0.85);
+composer.addPass(bloom);
+
 // Lights
-const amb = new THREE.AmbientLight(0xffffff, 0.6);
-const dir = new THREE.DirectionalLight(0xffffff, 0.9);
-dir.position.set(3, 6, 4);
+const amb = new THREE.AmbientLight(0xffffff, 0.55);
+const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+dir.position.set(3, 7, 6);
+dir.castShadow = true;
+dir.shadow.mapSize.set(1024, 1024);
+dir.shadow.camera.near = 1; dir.shadow.camera.far = 30;
+dir.shadow.camera.left = -10; dir.shadow.camera.right = 10; dir.shadow.camera.top = 10; dir.shadow.camera.bottom = -10;
 scene.add(amb, dir);
 
-// ---------- Lane / Track ----------
-const LANES = [-2.2, 0, 2.2]; // x positions for 3 lanes
-const TRACK_LEN = 40;         // length of each floor tile
-const TRACK_COUNT = 10;       // how many tiles we recycle
+// ---------- Lane / Floor (procedural texture) ----------
+const LANES = [-2.2, 0, 2.2];
+const TRACK_LEN = 40, TRACK_COUNT = 10;
+
+const floorTex = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#121c2e'; g.fillRect(0,0,256,256);
+  g.fillStyle = '#0f1729';
+  for(let y=0;y<256;y+=48){ g.fillRect(0,y,256,8); }
+  return new THREE.CanvasTexture(c);
+})();
+floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+floorTex.repeat.set(1, 6);
+
 const trackGroup = new THREE.Group();
 scene.add(trackGroup);
-
-const floorMat = new THREE.MeshStandardMaterial({ color: 0x121c2e, roughness: 0.9, metalness: 0.0 });
 for (let i=0;i<TRACK_COUNT;i++){
-  const geo = new THREE.BoxGeometry(7.8, 0.1, TRACK_LEN);
-  const mesh = new THREE.Mesh(geo, floorMat);
+  const geo = new THREE.BoxGeometry(8.2, 0.1, TRACK_LEN);
+  const mat = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.95, metalness: 0.0 });
+  const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(0, 0, -i*TRACK_LEN);
   mesh.receiveShadow = true;
   trackGroup.add(mesh);
@@ -102,102 +132,120 @@ s1.position.set(LANES[0]+(LANES[1]-LANES[0])/2, 0.06, -TRACK_LEN/2);
 s2.position.set(LANES[1]+(LANES[2]-LANES[1])/2, 0.06, -TRACK_LEN/2);
 trackGroup.add(s1, s2);
 
-// ---------- Forklift (simple low‑poly) ----------
+// ---------- Forklift (animated) ----------
 function makeForklift() {
   const g = new THREE.Group();
+
   // body
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.4, 2), new THREE.MeshStandardMaterial({ color: 0x00d084, metalness:0.1, roughness:0.6 }));
-  body.position.y = 0.8;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.4, 2), new THREE.MeshStandardMaterial({ color: 0x00d084, metalness:0.2, roughness:0.6 }));
+  body.position.y = 0.8; body.castShadow = true; body.receiveShadow = true;
   g.add(body);
+
   // cab
   const cab = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 1.0), new THREE.MeshStandardMaterial({ color: 0x1b2a41, roughness:0.8 }));
-  cab.position.set(0, 1.2, -0.1);
+  cab.position.set(0, 1.2, -0.1); cab.castShadow = true;
   g.add(cab);
-  // forks
+
+  // forks (slight bob with speed)
   const forkMat = new THREE.MeshStandardMaterial({ color: 0xa1b5d8, metalness:0.5, roughness:0.3 });
   const fork1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 1.0), forkMat);
   const fork2 = fork1.clone();
   fork1.position.set(-0.2, 0.3, 1.2);
-  fork2.position.set(0.2, 0.3, 1.2);
+  fork2.position.set( 0.2, 0.3, 1.2);
+  [fork1,fork2].forEach(f=>{f.castShadow=true});
   g.add(fork1, fork2);
-  // wheels
+  g.userData.forks = [fork1, fork2];
+
+  // wheels (spin)
   const wheelGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.5, 16);
   const wheelMat = new THREE.MeshStandardMaterial({ color: 0x0b1020, roughness:1 });
   const w1 = new THREE.Mesh(wheelGeo, wheelMat);
-  const w2 = w1.clone(); const w3 = w1.clone(); const w4 = w1.clone();
-  [w1,w2,w3,w4].forEach(w=>w.rotation.z = Math.PI/2);
+  const w2 = w1.clone(), w3 = w1.clone(), w4 = w1.clone();
+  [w1,w2,w3,w4].forEach(w=>{w.rotation.z = Math.PI/2; w.castShadow=true; w.receiveShadow=true;});
   w1.position.set(-0.5, 0.25, -0.6);
   w2.position.set( 0.5, 0.25, -0.6);
   w3.position.set(-0.5, 0.25,  0.8);
   w4.position.set( 0.5, 0.25,  0.8);
   g.add(w1,w2,w3,w4);
+  g.userData.wheels = [w1,w2,w3,w4];
+
   // shadow disc
   const sh = new THREE.Mesh(new THREE.CircleGeometry(0.9, 24), new THREE.MeshBasicMaterial({ color:0x000000, transparent:true, opacity:0.25 }));
-  sh.rotation.x = -Math.PI/2;
-  sh.position.y = 0.01;
+  sh.rotation.x = -Math.PI/2; sh.position.y = 0.01; sh.receiveShadow = true;
   g.add(sh);
+
   return g;
 }
 const forklift = makeForklift();
 scene.add(forklift);
 forklift.position.set(LANES[1], 0, 2);
 
-// ---------- Obstacles / Coins / Powerups ----------
+// ---------- Pools / Entities ----------
 const pool = { obst: [], coin: [], power: [] };
 const active = { obst: [], coin: [], power: [] };
 
-function makeBarrier() {
+function coinMesh(){
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.25,0.08, 24),
+    new THREE.MeshStandardMaterial({ color: 0xf6c34a, metalness:0.2, roughness:0.4, emissive:0x201500, emissiveIntensity:0.35 }));
+  m.rotation.x = Math.PI/2; m.castShadow=false; m.receiveShadow=false;
+  m.layers.enable(BLOOM_LAYER);
+  return m;
+}
+function powerMagnetMesh(){
+  const m = new THREE.Mesh(new THREE.TorusGeometry(0.35,0.12,12,24),
+    new THREE.MeshStandardMaterial({ color: 0x60a5fa, roughness:0.3, metalness:0.4, emissive:0x0a3058, emissiveIntensity:0.4 }));
+  m.layers.enable(BLOOM_LAYER);
+  return m;
+}
+function barrierMesh(){
   const m = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.9, 1.0),
     new THREE.MeshStandardMaterial({ color: 0xff7a00, roughness:0.8 }));
   const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 0.2),
     new THREE.MeshStandardMaterial({ color: 0xffe1bf, roughness:1 }));
   stripe.position.z = 0.0;
-  m.add(stripe);
+  m.add(stripe); m.castShadow=true; m.receiveShadow=true;
   return m;
 }
-function makeGate() {
+function gateMesh(){
   const m = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.3, 1.0),
     new THREE.MeshStandardMaterial({ color: 0x9aa6bd, roughness:0.8 }));
-  m.position.y = 1.2; // overhead
-  return m;
-}
-function makeCoin() {
-  const geo = new THREE.CylinderGeometry(0.25,0.25,0.08, 24);
-  const mat = new THREE.MeshStandardMaterial({ color: 0xf6c34a, metalness:0.2, roughness:0.4, emissive:0x201500, emissiveIntensity:0.25 });
-  const m = new THREE.Mesh(geo, mat);
-  m.rotation.x = Math.PI/2;
-  return m;
-}
-function makePowerMagnet() {
-  const m = new THREE.Mesh(new THREE.TorusGeometry(0.35,0.12,12,24),
-    new THREE.MeshStandardMaterial({ color: 0x60a5fa, roughness:0.3, metalness:0.4, emissive:0x0a3058, emissiveIntensity:0.3 }));
-  return m;
+  m.position.y = 1.2; m.castShadow=true; return m;
 }
 
-function spawnObstacle(zFar) {
-  const kind = Math.random()<0.55 ? 'barrier' : 'gate';
-  const mesh = kind==='barrier' ? (pool.obst.pop() || makeBarrier()) : (pool.obst.pop() || makeGate());
+function spawnObstacle(zFar, lane, kind) {
+  const mesh = (kind==='gate') ? (pool.obst.pop() || gateMesh()) : (pool.obst.pop() || barrierMesh());
   mesh.userData.kind = kind;
-  mesh.position.set(LANES[Math.floor(Math.random()*3)], 0, zFar);
+  mesh.position.set(LANES[lane], 0, zFar);
   scene.add(mesh); active.obst.push(mesh);
 }
-function spawnCoinLine(zFar){
-  const lane = Math.floor(Math.random()*3);
+function spawnCoinLine(zFar, lane){
   for (let i=0;i<6;i++){
-    const c = pool.coin.pop() || makeCoin();
+    const c = pool.coin.pop() || coinMesh();
     c.userData.taken = false;
     c.position.set(LANES[lane], 0.6, zFar - i*3);
     scene.add(c); active.coin.push(c);
   }
 }
-function spawnPower(zFar){
-  const p = pool.power.pop() || makePowerMagnet();
+function spawnPower(zFar, lane){
+  const p = pool.power.pop() || powerMagnetMesh();
   p.userData.kind='magnet'; p.userData.taken=false;
-  p.position.set(LANES[Math.floor(Math.random()*3)], 0.8, zFar);
+  p.position.set(LANES[lane], 0.8, zFar);
   scene.add(p); active.power.push(p);
 }
+function poolReturn(m){
+  scene.remove(m);
+  if (m.geometry && m.geometry.type === 'CylinderGeometry') pool.coin.push(m);
+  else if (m.geometry && m.geometry.type === 'TorusGeometry') pool.power.push(m);
+  else pool.obst.push(m);
+}
+function clearActive(){
+  for (const list of [active.obst, active.coin, active.power]){
+    list.forEach(m=>scene.remove(m));
+    list.length = 0;
+  }
+}
 
-// ---------- Game State ----------
+// ---------- Controls ----------
 const keys = new Set();
 addEventListener('keydown', e=>{
   keys.add(e.code);
@@ -205,7 +253,6 @@ addEventListener('keydown', e=>{
 });
 addEventListener('keyup', e=> keys.delete(e.code));
 
-// swipe
 let touch=null;
 addEventListener('pointerdown', e=>{ touch={x:e.clientX,y:e.clientY}; });
 addEventListener('pointerup', e=>{
@@ -219,15 +266,15 @@ addEventListener('pointerup', e=>{
   touch=null;
 });
 
+// ---------- Game State ----------
 const game = {
-  running: false, over: false,
-  speed: 16, base: 16, max: 46, accel: 0.010,
-  lane: 1, laneTarget: 1, laneLerp: 0, laneTime: 0.14,
-  jumpT: 0, jumpDur: 0.9, jumpH: 1.25,
-  slideT: 0, slideDur: 0.6,
-  dist: 0, score: 0, coins: 0, best: 0,
-  magnet: 0, invul: 0,
-  spawnTimers: { obst: 0, coin: 0, power: 0 },
+  running:false, over:false,
+  speed:16, base:16, max:50, accel:0.010,
+  lane:1, laneTarget:1, laneLerp:0, laneTime:0.16,
+  jumpT:0, jumpDur:0.9, jumpH:1.25,
+  slideT:0, slideDur:0.6,
+  dist:0, score:0, coins:0, best:0, magnet:0, invul:0,
+  patternTimer:0, coinTimer:0, powerTimer:0
 };
 try { game.best = +(localStorage.getItem('fork3d_best')||0); } catch {}
 hud.best.textContent = game.best;
@@ -237,37 +284,45 @@ function laneRight(){ game.laneTarget = Math.min(2, game.laneTarget+1); game.lan
 function jump(){ if (game.jumpT<=0) game.jumpT = game.jumpDur; }
 function slide(){ if (game.slideT<=0) game.slideT = game.slideDur; }
 
-function playerBox() {
-  // world coords near forklift
-  const x = forklift.position.x;
-  const yBase = 0.3; // feet
-  const isSlide = game.slideT>0;
-  const w = 0.9, h = isSlide ? 0.9 : 1.4, d = 1.4;
-  return { x, y: yBase + jumpOffset(), z: forklift.position.z, w, h, d };
-}
 function jumpOffset(){
   if (game.jumpT<=0) return 0;
   const t = 1 - (game.jumpT / game.jumpDur);
   return (1 - (2*t-1)*(2*t-1)) * game.jumpH;
 }
 function laneX(){
-  if (game.laneTarget === game.lane) return LANES[game.lane];
   const from = LANES[game.lane], to = LANES[game.laneTarget];
   const t = Math.min(1, game.laneLerp / game.laneTime);
   if (t>=1) game.lane = game.laneTarget;
-  return from + (to-from) * easeOutCubic(t);
+  return from + (to-from) * (1 - Math.pow(1-t, 3));
 }
-function easeOutCubic(t){ return 1 - Math.pow(1-t, 3); }
+function playerBox(){
+  const w=0.9, h=(game.slideT>0?0.9:1.4), d=1.4;
+  return { x: forklift.position.x, y: 0.3 + jumpOffset(), z: forklift.position.z, w, h, d };
+}
+
+// ---------- Patterns ----------
+const patterns = [
+  // simple singles
+  () => spawnObstacle(camera.position.z - TRACK_COUNT*TRACK_LEN - 4, randLane(), Math.random()<0.5?'barrier':'gate'),
+  // coin row then obstacle
+  () => { const ln=randLane(); spawnCoinLine(camera.position.z - TRACK_COUNT*TRACK_LEN - 4, ln); spawnObstacle(camera.position.z - TRACK_COUNT*TRACK_LEN - 16, ln, 'barrier'); },
+  // S‑curve: obstacles alternating lanes
+  () => { const seq=[0,1,2,1]; seq.forEach((ln,i)=> spawnObstacle(camera.position.z - TRACK_COUNT*TRACK_LEN - 4 - i*5, ln, i%2? 'gate':'barrier')); },
+  // triple gates (duck!)
+  () => { [0,1,2].forEach((ln,i)=> spawnObstacle(camera.position.z - TRACK_COUNT*TRACK_LEN - 4 - i*4, ln, 'gate')); },
+  // zig‑zag barriers
+  () => { [2,1,0,1,2].forEach((ln,i)=> spawnObstacle(camera.position.z - TRACK_COUNT*TRACK_LEN - 4 - i*4, ln, 'barrier')); },
+];
+function randLane(){ return Math.floor(Math.random()*3); }
 
 // ---------- Loop ----------
 let last=0;
 function startGame(){
   overlay.classList.add('hidden');
   game.running=true; game.over=false;
-  game.speed=game.base; game.lane=1; game.laneTarget=1; game.laneLerp=0;
-  game.jumpT=0; game.slideT=0; game.dist=0; game.score=0; game.coins=0; game.magnet=0; game.invul=0;
-  clearActive();
-  last=0;
+  Object.assign(game, { speed:game.base, lane:1, laneTarget:1, laneLerp:0, jumpT:0, slideT:0,
+    dist:0, score:0, coins:0, magnet:0, invul:0, patternTimer:0, coinTimer:0, powerTimer:0 });
+  clearActive(); last=0;
   animate(performance.now());
 }
 playBtn.onclick = startGame;
@@ -277,11 +332,11 @@ function animate(t){
   if (!last) last = t;
   const dt = Math.min(0.033, (t-last)/1000); last=t;
 
-  // input (one-shot lane changes)
+  // input
   if (keys.has('ArrowLeft')) { laneLeft(); keys.delete('ArrowLeft'); }
   if (keys.has('ArrowRight')){ laneRight(); keys.delete('ArrowRight'); }
-  if (keys.has('ArrowUp'))   { jump(); keys.delete('ArrowUp'); }
-  if (keys.has('ArrowDown')) { slide(); keys.delete('ArrowDown'); }
+  if (keys.has('ArrowUp'))   { jump();     keys.delete('ArrowUp'); }
+  if (keys.has('ArrowDown')) { slide();    keys.delete('ArrowDown'); }
 
   // timers
   if (game.jumpT>0)  game.jumpT  -= dt;
@@ -295,85 +350,77 @@ function animate(t){
   game.dist  += game.speed * dt;
   game.score = Math.floor(game.dist*6) + game.coins*25;
 
-  // move track forward & recycle
+  // move + recycle track
   const dz = game.speed * dt;
   trackGroup.children.forEach(tile=>{
     tile.position.z += dz;
-    if (tile.position.z > camera.position.z + TRACK_LEN*0.5){
+    if (tile.position.z > camRig.position.z + TRACK_LEN*0.5){
       tile.position.z -= TRACK_COUNT * TRACK_LEN;
     }
   });
   s1.position.z = -TRACK_LEN/2 + (trackGroup.children[0].position.z % TRACK_LEN);
   s2.position.z = s1.position.z;
 
-  // forklift pose
+  // forklift pose & animation
   forklift.position.x = laneX();
-  forklift.position.y = 0 + jumpOffset();
-  forklift.rotation.z = (forklift.position.x - LANES[game.lane]) * 0.05; // little lean
+  forklift.position.y = jumpOffset();
+  forklift.rotation.z = (LANES[game.laneTarget] - LANES[1]) * 0.07; // lean by lane
+  const spin = dz * 3.4; forklift.userData.wheels.forEach(w=> w.rotation.y += spin);
+  const wob = Math.sin(performance.now()/220) * Math.min(0.1, game.speed*0.002);
+  forklift.userData.forks.forEach(f=> f.rotation.x = wob);
 
-  // spawn cadence
-  game.spawnTimers.obst += dt;
-  game.spawnTimers.coin += dt;
-  game.spawnTimers.power += dt;
-  if (game.spawnTimers.obst > Math.max(0.6, 1.4 - game.speed/30)) { spawnObstacle(camera.position.z - TRACK_COUNT*TRACK_LEN); game.spawnTimers.obst=0; }
-  if (game.spawnTimers.coin > 1.0) { spawnCoinLine(camera.position.z - TRACK_COUNT*TRACK_LEN - 6); game.spawnTimers.coin=0; }
-  if (game.spawnTimers.power > 8.0 && game.magnet<=0) { spawnPower(camera.position.z - TRACK_COUNT*TRACK_LEN - 4); game.spawnTimers.power=0; }
+  // camera follow + bank
+  const camTarget = new THREE.Vector3(forklift.position.x*0.55, 3.8 + forklift.position.y*0.3, 8.8);
+  camRig.position.lerp(camTarget, 0.08);
+  camRig.rotation.y = THREE.MathUtils.lerp(camRig.rotation.y, (forklift.position.x/2.2)*0.12, 0.1);
 
-  // advance active objects
-  const allLists = [active.obst, active.coin, active.power];
-  for (const list of allLists){
+  // pattern cadence (gets faster)
+  game.patternTimer += dt; game.coinTimer += dt; game.powerTimer += dt;
+  const gap = Math.max(0.55, 1.5 - game.speed/28);
+  if (game.patternTimer > gap){ (patterns[Math.floor(Math.random()*patterns.length)])(); game.patternTimer = 0; }
+  if (game.coinTimer > 1.1){ spawnCoinLine(camRig.position.z - TRACK_COUNT*TRACK_LEN - 10, randLane()); game.coinTimer = 0; }
+  if (game.powerTimer > 8.0 && game.magnet<=0){ spawnPower(camRig.position.z - TRACK_COUNT*TRACK_LEN - 6, randLane()); game.powerTimer = 0; }
+
+  // advance actives + cleanup
+  for (const list of [active.obst, active.coin, active.power]){
     for (let i=list.length-1;i>=0;i--){
       const m = list[i];
-      m.position.z += dz * (m.userData.kind==='train' ? 2.0 : 1.0);
-
-      // simple spin for coins/power
-      if (m.geometry.type === 'CylinderGeometry') m.rotation.y += 3*dt;
-      if (m.geometry.type === 'TorusGeometry') m.rotation.y += 2*dt;
-
-      // cleanup behind camera
-      if (m.position.z > camera.position.z + 8){
-        poolReturn(m);
-        list.splice(i,1);
-      }
+      m.position.z += dz;
+      if (m.geometry && m.geometry.type === 'CylinderGeometry') m.rotation.y += 3*dt;
+      if (m.geometry && m.geometry.type === 'TorusGeometry')    m.rotation.y += 2*dt;
+      if (m.position.z > camRig.position.z + 8){ poolReturn(m); list.splice(i,1); }
     }
   }
 
   // collisions
   const pb = playerBox();
-
-  // coins
+  // coins (magnet)
   for (const c of active.coin){
     if (c.userData.taken) continue;
     const magnetR = game.magnet>0 ? 1.8 : 0.7;
-    if (Math.abs(pb.x - c.position.x) < magnetR && Math.abs((pb.z) - c.position.z) < magnetR && Math.abs(pb.y - c.position.y) < 1.2){
-      c.userData.taken=true; game.coins++;
-      // pull to forklift if magnet
-      c.position.x += (pb.x - c.position.x) * 0.7;
-      c.position.y += (pb.y + 0.8 - c.position.y) * 0.7;
+    if (Math.abs(pb.x - c.position.x) < magnetR && Math.abs(pb.z - c.position.z) < magnetR && Math.abs(pb.y - c.position.y) < 1.2){
+      c.userData.taken=true; game.coins++; // pull toward player when taken
+      c.position.x = THREE.MathUtils.lerp(c.position.x, pb.x, 0.8);
+      c.position.y = THREE.MathUtils.lerp(c.position.y, pb.y+0.8, 0.8);
       c.position.z = pb.z - 0.5;
     }
   }
-
-  // powerups
+  // power
   for (const p of active.power){
     if (p.userData.taken) continue;
     if (Math.abs(pb.x - p.position.x) < 0.9 && Math.abs(pb.z - p.position.z) < 1.0){
-      p.userData.taken=true; game.magnet = 8; note('Magnet!', 800);
+      p.userData.taken=true; game.magnet=8; note('Magnet!', 800);
     }
   }
-
-  // obstacles (barrier vs gate)
+  // obstacles
   for (const o of active.obst){
     const dx = Math.abs(pb.x - o.position.x);
     const dz2 = Math.abs(pb.z - o.position.z);
     if (dx < 0.7 && dz2 < 0.9){
       if (o.userData.kind==='barrier'){
-        // must be high enough jump
-        if (pb.y < 0.9) { crash(); break; }
+        if (pb.y < 0.9) { crash(); break; } // jump not high enough
       } else {
-        // gate overhead: must be sliding (reduced height)
-        const sliding = game.slideT>0;
-        if (!sliding) { crash(); break; }
+        if (!(game.slideT>0)) { crash(); break; } // not sliding under gate
       }
     }
   }
@@ -385,36 +432,22 @@ function animate(t){
   hud.speed.textContent = Math.round(game.speed);
   hud.mag.textContent   = game.magnet>0 ? (game.magnet|0)+'s' : '—';
 
-  renderer.render(scene, camera);
+  composer.render();
   requestAnimationFrame(animate);
-}
-
-function poolReturn(m){
-  scene.remove(m);
-  if (m.geometry.type === 'CylinderGeometry') pool.coin.push(m);
-  else if (m.geometry.type === 'TorusGeometry') pool.power.push(m);
-  else pool.obst.push(m);
-}
-function clearActive(){
-  for (const list of [active.obst, active.coin, active.power]){
-    list.forEach(m=>scene.remove(m));
-    list.length = 0;
-  }
 }
 
 // ---------- Crash / UI ----------
 function crash(){
   if (game.invul>0) return;
-  game.invul = 0.5;
-  game.running = false; game.over=true;
+  game.invul = 0.5; game.running = false; game.over = true;
   try { if (game.score > game.best) { game.best = game.score; localStorage.setItem('fork3d_best', String(game.best)); } } catch {}
-  // small knockback
-  const tStart = performance.now(), startZ = forklift.position.z;
-  (function knock(ts){
-    const t = (ts - tStart)/300;
-    forklift.position.z = startZ + Math.sin(Math.min(1,t)*Math.PI)*0.6;
-    renderer.render(scene, camera);
-    if (t<1) requestAnimationFrame(knock); else showOverlay();
+  // quick knockback
+  const t0 = performance.now(), z0 = forklift.position.z;
+  (function back(ts){
+    const t = Math.min(1, (ts - t0)/320);
+    forklift.position.z = z0 + Math.sin(t*Math.PI)*0.7;
+    composer.render();
+    if (t<1) requestAnimationFrame(back); else showOverlay();
   })(performance.now());
 }
 function showOverlay(){
@@ -427,14 +460,16 @@ function note(msg,ms){
   clearTimeout(note._t); note._t = setTimeout(()=>toast.classList.remove('show'), ms||800);
 }
 
-// ---------- Resize ----------
+// ---------- Helpers ----------
 addEventListener('resize', ()=>{
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
 });
 
-// Auto-show overlay on load
-// (User presses Play to start)
+function easeOutCubic(t){ return 1 - Math.pow(1-t, 3); }
+
+// Start on click
 </script>
 </body>
 </html>
