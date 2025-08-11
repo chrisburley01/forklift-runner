@@ -1,62 +1,407 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Forklift Runner</title>
-<link rel="manifest" href="manifest.json">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+<title>Forklift Dash</title>
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #0d0d0d;
-    overflow: hidden;
-    height: 100%;
-    touch-action: none;
-    color: white;
-    font-family: sans-serif;
-  }
-  #gameCanvas {
-    display: block;
-    background: #222;
-    margin: 0 auto;
-  }
+  :root { color-scheme: dark; --bg:#0b0f15; --panel:#121826; --accent:#00d084; --muted:#7a8aa0; --danger:#ff4d4f; }
+  html,body{margin:0;height:100%;background:var(--bg);font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;touch-action:none}
+  canvas{display:block;width:100vw;height:100vh}
+  #hud{position:fixed;left:0;right:0;top:8px;display:flex;justify-content:center;z-index:5;pointer-events:none}
+  #hud .card{display:flex;gap:12px;align-items:center;background:#0f1729cc;border:1px solid #1e293b;border-radius:10px;padding:6px 10px;color:#e6edf7;backdrop-filter:blur(6px);font-weight:600}
+  .kv{display:flex;gap:6px}.k{font-size:.72rem;color:#8aa0c0;text-transform:uppercase;letter-spacing:.08em}.v{font-variant-numeric:tabular-nums}
+  .centerUI{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:6}
+  .panel{background:#0f1729;border:1px solid #22304d;border-radius:14px;padding:18px 20px;min-width:min(520px,92vw);color:#e6edf7;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+  .panel h1{margin:0 0 8px 0;font-size:22px}
+  .panel p{margin:8px 0 12px 0;color:#a9bad5}
+  .btn{appearance:none;border:1px solid #22304d;background:#121c30;color:#e6edf7;padding:10px 14px;border-radius:10px;font-weight:700;cursor:pointer}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
+  #start,#over{display:none}
+  .toast{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:#0f1729e6;border:1px solid #22304d;color:#e6edf7;border-radius:10px;padding:8px 12px;z-index:7;display:none}
+  .toast.show{display:block}
+  @media(max-width:760px){ .panel{min-width:92vw} }
 </style>
 </head>
 <body>
-<canvas id="gameCanvas"></canvas>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div class="card">
+    <div class="kv"><span class="k">Score</span><span class="v" id="scoreV">0</span></div>
+    <div class="kv"><span class="k">Coins</span><span class="v" id="coinV">0</span></div>
+    <div class="kv"><span class="k">Best</span><span class="v" id="bestV">0</span></div>
+    <div class="kv"><span class="k">Speed</span><span class="v" id="spdV">0</span></div>
+    <div class="kv"><span class="k">Magnet</span><span class="v" id="magV">—</span></div>
+  </div>
+</div>
+
+<div class="centerUI" id="start">
+  <div class="panel">
+    <h1>Forklift Dash</h1>
+    <p>Swipe (or use keys) — <b>Left/Right</b> change lane, <b>Up</b> jump, <b>Down</b> slide.  
+       Collect coins, avoid obstacles, and survive as long as you can.</p>
+    <div class="row">
+      <button class="btn" id="playBtn">Play</button>
+    </div>
+  </div>
+</div>
+
+<div class="centerUI" id="over">
+  <div class="panel">
+    <h1>Run Over</h1>
+    <p id="sum">Score: 0 • Coins: 0</p>
+    <div class="row">
+      <button class="btn" id="againBtn">Play Again</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Magnet!</div>
+
 <script>
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+(() => {
+  // ---------- Canvas / DPI ----------
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d', { alpha:false, desynchronized:true });
+  let DPR = Math.max(1, devicePixelRatio || 1);
+  function fit(){ DPR = Math.max(1, devicePixelRatio || 1);
+    const vw = visualViewport ? visualViewport.width : innerWidth;
+    const vh = visualViewport ? visualViewport.height : innerHeight;
+    cv.width = Math.floor(vw*DPR); cv.height = Math.floor(vh*DPR);
+    cv.style.width = vw+'px'; cv.style.height = vh+'px';
+  }
+  addEventListener('resize', fit, {passive:true}); if (visualViewport) visualViewport.addEventListener('resize', fit);
+  fit();
 
-function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
+  // ---------- UI ----------
+  const $ = id => document.getElementById(id);
+  const scoreV=$('scoreV'), coinV=$('coinV'), bestV=$('bestV'), spdV=$('spdV'), magV=$('magV');
+  const startUI=$('start'), overUI=$('over'), toast=$('toast');
+  $('playBtn').onclick=()=>startGame();
+  $('againBtn').onclick=()=>startGame();
+  function showStart(){startUI.style.display='flex';overUI.style.display='none';}
+  function showOver(){startUI.style.display='none';overUI.style.display='flex';}
+  function hideUIs(){startUI.style.display='none';overUI.style.display='none';}
+  function note(msg,ms=900){toast.textContent=msg;toast.classList.add('show');clearTimeout(note._t);note._t=setTimeout(()=>toast.classList.remove('show'),ms);}
 
-// Basic forklift runner demo loop
-let forkliftX = 50;
-let forkliftY = canvas.height / 2;
-let speed = 3;
+  // ---------- Controls (keys + swipe) ----------
+  const keys = new Set();
+  addEventListener('keydown', e=>{ keys.add(e.code); if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code)) e.preventDefault(); });
+  addEventListener('keyup', e=> keys.delete(e.code));
 
-function drawForklift(x, y) {
-  ctx.fillStyle = 'yellow';
-  ctx.fillRect(x, y, 50, 30);
-  ctx.fillStyle = 'black';
-  ctx.fillRect(x + 35, y + 5, 10, 20);
-}
+  let touch=null;
+  addEventListener('pointerdown', e=>{ touch={x:e.clientX,y:e.clientY,dx:0,dy:0}; });
+  addEventListener('pointermove', e=>{ if(!touch) return; touch.dx=e.clientX-touch.x; touch.dy=e.clientY-touch.y; });
+  addEventListener('pointerup',   _=>{
+    if(!touch) return;
+    const {dx,dy}=touch; const ax=Math.abs(dx), ay=Math.abs(dy);
+    if (ax>30 || ay>30){
+      if (ax>ay){ if (dx>0) laneRight(); else laneLeft(); }
+      else { if (dy<0) jump(); else slide(); }
+    }
+    touch=null;
+  });
 
-function gameLoop() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  forkliftX += speed;
-  if (forkliftX > canvas.width) forkliftX = -50;
-  drawForklift(forkliftX, forkliftY);
-  requestAnimationFrame(gameLoop);
-}
+  // ---------- Game state ----------
+  const rng = (a,b)=>a+Math.random()*(b-a);
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const H = ()=>cv.height, W = ()=>cv.width;
 
-gameLoop();
+  const game = {
+    running:false, over:false, t:0, dist:0, score:0, coins:0, best:0,
+    speed:16, baseSpeed:16, maxSpeed:42, accel:0.008, laneX:[-1,0,1], laneCur:1,
+    jumpT:0, jumpDur:0.9, jumpH:120, slideT:0, slideDur:0.7, magnet:0, invul:0
+  };
+  try{ game.best = +(localStorage.getItem('forklift_best_score')||0);}catch{}
+  bestV.textContent = game.best;
+
+  // Entities
+  const ents = { obstacles:[], coins:[], trains:[], powerups:[] }; // trains = moving shelf carts
+  const laneToX = i => (W()/2) + (i-1)* (Math.min(W(),800)/3); // three lanes
+
+  // Player "forklift" bbox in screen space (for collisions)
+  function playerBox(){
+    const x = laneToX(game.laneCur);
+    const yGround = H()*0.82;
+    const z = jumpOffset(); // - up
+    const slideK = slideOffset(); // reduces height
+    const w = 80, hBase = 120, h = hBase*slideK;
+    return {x, y: yGround - h - z, w, h};
+  }
+
+  function jumpOffset(){
+    if (game.jumpT<=0) return 0;
+    const t = 1 - (game.jumpT / game.jumpDur); // 0..1
+    // parabolic jump
+    return (1 - (2*t-1)*(2*t-1)) * game.jumpH;
+  }
+  function slideOffset(){
+    if (game.slideT<=0) return 1;
+    // 1 -> 0.55 -> 1
+    const t = 1 - (game.slideT / game.slideDur);
+    return 1 - 0.45 * Math.sin(Math.PI * Math.min(1, t));
+  }
+
+  function laneLeft(){ game.laneCur = Math.max(0, game.laneCur-1); }
+  function laneRight(){ game.laneCur = Math.min(2, game.laneCur+1); }
+  function jump(){ if (game.jumpT<=0) game.jumpT = game.jumpDur; }
+  function slide(){ if (game.slideT<=0) game.slideT = game.slideDur; }
+
+  // Spawners
+  let spawnTimer=0, coinTimer=0, trainTimer=0, powerTimer=0;
+  function spawnObstacle(){
+    // low barrier or high gate
+    const kind = Math.random()<0.55 ? 'barrier' : 'gate';
+    ents.obstacles.push({kind, lane:Math.floor(rng(0,3)), z:0, y: -60, passed:false});
+  }
+  function spawnCoinLine(){
+    const lane = Math.floor(rng(0,3));
+    const n = 6;
+    for(let i=0;i<n;i++){
+      ents.coins.push({lane, y: -i*120 - 60, taken:false});
+    }
+  }
+  function spawnTrain(){
+    // moving shelf cart occupying a lane; moves faster than ground to overtake player
+    ents.trains.push({lane:Math.floor(rng(0,3)), y:-60, spd:rng(40,64)});
+  }
+  function spawnPower(){
+    ents.powerups.push({kind:'magnet', lane:Math.floor(rng(0,3)), y:-60, taken:false});
+  }
+
+  // ---------- Loop ----------
+  let last=0;
+  function startGame(){
+    hideUIs();
+    // reset state
+    game.running=true; game.over=false; game.t=0; game.dist=0; game.score=0; game.coins=0;
+    game.speed=game.baseSpeed; game.laneCur=1; game.jumpT=0; game.slideT=0; game.magnet=0; game.invul=0;
+    ents.obstacles.length=0; ents.coins.length=0; ents.trains.length=0; ents.powerups.length=0;
+    spawnTimer=coinTimer=trainTimer=powerTimer=0;
+    last=0; requestAnimationFrame(loop);
+  }
+  function gameOver(){
+    game.running=false; game.over=true;
+    try{ if (game.score>game.best) { game.best=game.score; localStorage.setItem('forklift_best_score', String(game.best)); } }catch{}
+    $('sum').textContent = `Score: ${game.score} • Coins: ${game.coins} • Best: ${game.best}`;
+    bestV.textContent = game.best;
+    showOver();
+  }
+  showStart();
+
+  function loop(ts){
+    if (!game.running) return;
+    if (!last) last=ts;
+    const dt = Math.min(0.033, (ts-last)/1000); last=ts;
+
+    update(dt); render(); requestAnimationFrame(loop);
+  }
+
+  function update(dt){
+    // controls
+    if (keys.has('ArrowLeft'))  { laneLeft();  keys.delete('ArrowLeft'); }
+    if (keys.has('ArrowRight')) { laneRight(); keys.delete('ArrowRight'); }
+    if (keys.has('ArrowUp'))    { jump();     keys.delete('ArrowUp'); }
+    if (keys.has('ArrowDown'))  { slide();    keys.delete('ArrowDown'); }
+
+    // timers
+    if (game.jumpT>0)  game.jumpT  -= dt;
+    if (game.slideT>0) game.slideT -= dt;
+    if (game.magnet>0) game.magnet -= dt;
+    if (game.invul>0)  game.invul  -= dt;
+
+    // speed ramp
+    game.speed = Math.min(game.maxSpeed, game.speed + game.accel);
+    game.dist  += game.speed * dt;
+    game.score = Math.floor(game.dist) + game.coins*15;
+
+    // spawn cadence (based on speed)
+    spawnTimer += dt; coinTimer += dt; trainTimer += dt; powerTimer += dt;
+    if (spawnTimer > Math.max(0.6, 1.6 - game.speed/30)) { spawnObstacle(); spawnTimer=0; }
+    if (coinTimer  > 1.2) { spawnCoinLine(); coinTimer=0; }
+    if (trainTimer > 2.8) { spawnTrain(); trainTimer=0; }
+    if (powerTimer > 7.5 && game.magnet<=0) { spawnPower(); powerTimer=0; }
+
+    const scroll = game.speed * 60 * dt; // px/s scaled
+
+    // move entities down-screen
+    ents.obstacles.forEach(o=> o.y += scroll);
+    ents.coins.forEach(c=> c.y += scroll);
+    ents.trains.forEach(t=> t.y += scroll * (t.spd/game.speed)); // overtake
+    ents.powerups.forEach(p=> p.y += scroll);
+
+    // cleanup
+    for (const list of [ents.obstacles, ents.coins, ents.trains, ents.powerups]) {
+      for (let i=list.length-1;i>=0;i--) if (list[i].y > H()+200) list.splice(i,1);
+    }
+
+    // collisions
+    const p = playerBox();
+    // coins (magnet increases pickup radius)
+    const coinRadius = 55 + (game.magnet>0 ? 90 : 0);
+    for (const c of ents.coins){
+      if (c.taken) continue;
+      const cx = laneToX(c.lane), cy = c.y;
+      if (Math.abs(p.x - cx) < coinRadius && Math.abs((p.y+p.h/2) - cy) < coinRadius){
+        c.taken=true; game.coins+=1; note('+1 coin', 400);
+      }
+    }
+    // powerup
+    for (const pw of ents.powerups){
+      if (pw.taken) continue;
+      const px = laneToX(pw.lane), py = pw.y;
+      if (Math.abs(p.x - px) < 70 && Math.abs((p.y+p.h/2) - py) < 90){
+        pw.taken=true; game.magnet=8; note('Magnet!', 700);
+      }
+    }
+    // trains (solid collision unless jumping high enough or sliding under gate types)
+    for (const t of ents.trains){
+      if (hitLaneObj(t.lane, t.y, 120, 120, p)){
+        crash();
+        break;
+      }
+    }
+    // obstacles: barrier (jump over), gate (slide under)
+    for (const o of ents.obstacles){
+      if (o.kind==='barrier'){
+        // need jump height > 60 at contact
+        if (hitLaneObj(o.lane, o.y, 120, 80, p) && jumpOffset()<60) { crash(); break; }
+      } else {
+        // high gate: need slide active (height reduced)
+        if (hitLaneObj(o.lane, o.y, 120, 120, p) && slideOffset()>0.78) { crash(); break; }
+      }
+    }
+
+    // HUD
+    scoreV.textContent = game.score;
+    coinV.textContent  = game.coins;
+    bestV.textContent  = game.best;
+    spdV.textContent   = Math.round(game.speed)+'';
+    magV.textContent   = game.magnet>0 ? (game.magnet|0)+'s' : '—';
+  }
+
+  function crash(){
+    if (game.invul>0) return; // (reserved for future shield)
+    game.invul = 0.5;
+    gameOver();
+  }
+
+  function hitLaneObj(lane, y, w, h, p){
+    const x = laneToX(lane);
+    const ax = Math.abs(p.x - x) < (p.w/2 + w/2);
+    const ay = Math.abs((p.y+p.h/2) - y) < (p.h/2 + h/2);
+    return ax && ay;
+  }
+
+  // ---------- Rendering ----------
+  function render(){
+    const w=W(), h=H();
+    ctx.fillStyle = '#0b0f15'; ctx.fillRect(0,0,w,h);
+
+    // background: parallax rows and lane markings
+    const laneW = Math.min(w, 800)/3;
+    const floorY = h*0.86;
+    const scrollY = (game.t*60 + game.dist*2) % 60;
+    // side walls
+    ctx.fillStyle = '#0e1728';
+    ctx.fillRect(w/2 - laneW*1.7, 0, laneW*0.2, h);
+    ctx.fillRect(w/2 + laneW*1.5, 0, laneW*0.2, h);
+    // lane floor
+    ctx.fillStyle = '#121c2e';
+    ctx.fillRect(w/2 - laneW*1.5, 0, laneW*3, h);
+    // dashed center lines
+    ctx.strokeStyle = '#2b3d5e'; ctx.lineWidth = 4; ctx.setLineDash([22,22]);
+    ctx.beginPath();
+    ctx.moveTo(w/2 - laneW, 0); ctx.lineTo(w/2 - laneW, h);
+    ctx.moveTo(w/2 + laneW, 0); ctx.lineTo(w/2 + laneW, h);
+    ctx.stroke(); ctx.setLineDash([]);
+
+    // moving floor stripes
+    ctx.fillStyle = '#0e1728';
+    for (let y=-60; y<h; y+=120){
+      ctx.fillRect(w/2 - laneW*1.5, y + (scrollY), laneW*3, 8);
+    }
+
+    // draw entities
+    drawCoins(); drawPowerups(); drawObstacles(); drawTrains();
+
+    // draw player
+    drawPlayer();
+
+    game.t += 1/60;
+  }
+
+  function drawPlayer(){
+    const p = playerBox();
+    const z = jumpOffset(); // vertical pop
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    // forklift body
+    ctx.fillStyle = '#00d084';
+    roundRect(-p.w/2, 0, p.w, p.h, 10); ctx.fill();
+    // forks
+    ctx.fillStyle = '#a1b5d8';
+    ctx.fillRect(-p.w*0.35, p.h*0.78, p.w*0.7, 10);
+    ctx.fillRect(-p.w*0.35, p.h*0.78+12, p.w*0.7, 10);
+    // wheels
+    ctx.fillStyle = '#0b1020';
+    ctx.fillRect(-p.w*0.48, p.h*0.12, p.w*0.96, 10);
+    ctx.fillRect(-p.w*0.48, p.h*0.86, p.w*0.96, 10);
+    // shadow
+    ctx.globalAlpha=0.25;
+    ctx.fillStyle='#000';
+    ctx.beginPath(); ctx.ellipse(0, p.h+16, p.w*0.6, 14 - Math.min(10, z*0.08), 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawCoins(){
+    ctx.save();
+    ctx.fillStyle = '#f6c34a';
+    ents.coins.forEach(c=>{
+      if (c.taken) return;
+      const x = laneToX(c.lane), y=c.y;
+      ctx.beginPath();
+      ctx.arc(x, y, 16, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#ffe9a8'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI*2); ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  function drawPowerups(){
+    ctx.save();
+    ents.powerups.forEach(pw=>{
+      if (pw.taken) return;
+      const x=laneToX(pw.lane), y=pw.y;
+      ctx.fillStyle='#60a5fa'; roundRect(x-20, y-20, 40, 40, 8); ctx.fill();
+      ctx.fillStyle='#0b1222'; ctx.font='700 18px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('M', x, y);
+    });
+    ctx.restore();
+  }
+
+  function drawObstacles(){
+    ents.obstacles.forEach(o=>{
+      const x=laneToX(o.lane), y=o.y;
+      if (o.kind==='barrier'){
+        ctx.fillStyle='#ff7a00'; roundRect(x-50, y-40, 100, 80, 10); ctx.fill();
+        ctx.fillStyle='#ffe1bf'; ctx.fillRect(x-50, y-8, 100, 16);
+      } else {
+        // gate: top beam only (duck under)
+        ctx.fillStyle='#9aa6bd'; roundRect(x-70, y-60, 140, 28, 8); ctx.fill();
+      }
+    });
+  }
+
+  function drawTrains(){
+    ents.trains.forEach(t=>{
+      const x=laneToX(t.lane), y=t.y;
+      ctx.fillStyle='#263858'; roundRect(x-60, y-50, 120, 100, 12); ctx.fill();
+      ctx.fillStyle='#3b517a'; ctx.fillRect(x-56, y-22, 112, 8); ctx.fillRect(x-56, y+10, 112, 8);
+    });
+  }
+
+  function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+})();
 </script>
 </body>
 </html>
