@@ -1,20 +1,11 @@
 {
   "name": "Forklift Runner",
   "short_name": "Forklift",
-  "start_url": "./index.html",
+  "start_url": "/forklift-runner/",
   "display": "standalone",
-  "background_color": "#0b0f15",
-  "theme_color": "#0b0f15",
+  "background_color": "#0d0d0d",
+  "theme_color": "#0d0d0d",
   "icons": [
     {
-      "src": "icons/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "icons/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
-    }
-  ]
-}
+      "src": "Icons/icon-192.png",
+      "sizes": "192
