@@ -1,9 +1,8 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <meta name="theme-color" content="#0b0f15">
@@ -11,8 +10,8 @@
 <style>
   :root { color-scheme: dark; --bg:#0b0f15; --panel:#121826; --accent:#00d084; --muted:#7a8aa0; --warn:#ffb020; --danger:#ff4d4f; }
   html,body{height:100%;margin:0;background:var(--bg);font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-  #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr auto;gap:.5rem}
-  header,footer{display:flex;align-items:center;justify-content:space-between;padding:.6rem .9rem;background:linear-gradient(180deg,#111827,#0e1522);box-shadow:0 6px 24px rgba(0,0,0,.35);z-index:3}
+  #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr auto;gap:.5rem;padding-bottom:env(safe-area-inset-bottom)}
+  header,footer{display:flex;align-items:center;justify-content:space-between;padding:.6rem calc(.9rem + env(safe-area-inset-right));padding-left:calc(.9rem + env(safe-area-inset-left));background:linear-gradient(180deg,#111827,#0e1522);box-shadow:0 6px 24px rgba(0,0,0,.35);z-index:3}
   header h1{margin:0;font-size:1rem;font-weight:700;letter-spacing:.4px;color:#e6edf7}
   header .right{display:flex;gap:.4rem;align-items:center}
   .pill{background:#0f1729;border:1px solid #1f2a44;color:#c8d5ea;padding:.35rem .6rem;border-radius:999px;font-size:.8rem}
@@ -26,7 +25,7 @@
   #hud .power{display:flex;gap:.4rem}
   .chip{border:1px solid #1f2a44;background:#0f1729;padding:.2rem .5rem;border-radius:.6rem;font-size:.78rem}
   canvas{display:block;position:absolute;inset:0}
-  #controls{position:fixed;inset:auto 0 0 0;display:grid;grid-template-columns:1fr auto 1fr;gap:.75rem;padding:.75rem;z-index:4;touch-action:none}
+  #controls{position:fixed;inset:auto 0 0 0;display:grid;grid-template-columns:1fr auto 1fr;gap:.75rem;padding:.75rem;z-index:4;touch-action:none;padding-bottom:calc(.75rem + env(safe-area-inset-bottom))}
   .pad{display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(3,64px);gap:.5rem;place-content:center}
   .key{width:64px;height:64px;border-radius:18px;background:#111a2d;border:1px solid #1f2a44;color:#cfe3ff;display:flex;align-items:center;justify-content:center;font-weight:700;user-select:none}
   .key.active{outline:2px solid var(--accent);color:#fff}
@@ -35,7 +34,6 @@
   @media(min-width:980px){ #controls{display:none} }
   .toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:.8rem 1rem;background:#0f1729e6;border:1px solid #22304d;color:#e6edf7;border-radius:.8rem;z-index:5;display:none}
   .toast.show{display:block}
-  /* modal */
   .modal{position:fixed;inset:0;background:#0009;display:none;align-items:center;justify-content:center;z-index:6}
   .modal .panel{background:#0f1729;border:1px solid #22304d;border-radius:14px;min-width:min(560px,92vw);max-width:92vw;padding:1rem}
   .panel h2{margin:.2rem 0 .6rem 0;color:#e6edf7}
@@ -85,7 +83,6 @@
 
 <div class="toast" id="toast">Picked up! Deliver to the matching coloured rack →</div>
 
-<!-- Mobile touch controls -->
 <div id="controls">
   <div class="pad" id="padL">
     <div></div><div class="key" data-k="ArrowUp">▲</div><div></div>
@@ -101,23 +98,26 @@
   </div>
 </div>
 
-<!-- Game + PWA logic -->
 <script>
 (() => {
-  // ----- Canvas & DPI -----
   const canvas = document.getElementById('game');
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { alpha: false });
   let DPR = Math.max(1, window.devicePixelRatio || 1);
-  function resize() {
-    DPR = Math.max(1, window.devicePixelRatio || 1);
-    canvas.width = Math.floor(innerWidth * DPR);
-    canvas.height = Math.floor((innerHeight) * DPR);
-    canvas.style.width = innerWidth + 'px';
-    canvas.style.height = innerHeight + 'px';
-  }
-  addEventListener('resize', resize, {passive:true}); resize();
 
-  // ----- UI -----
+  function sizeCanvas() {
+    // Use visualViewport to avoid URL bar resize issues
+    const vh = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+    const vw = (window.visualViewport ? window.visualViewport.width : window.innerWidth);
+    DPR = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.floor(vw * DPR);
+    canvas.height = Math.floor(vh * DPR);
+    canvas.style.width = vw + 'px';
+    canvas.style.height = vh + 'px';
+  }
+  sizeCanvas();
+  addEventListener('resize', sizeCanvas, { passive: true });
+  if (window.visualViewport) visualViewport.addEventListener('resize', sizeCanvas);
+
   const $ = id => document.getElementById(id);
   const timeV = $('timeV'), scoreV = $('scoreV'), comboV = $('comboV'),
         loadsV = $('loadsV'), speedV = $('speedV'), bestPill = $('bestPill');
@@ -131,12 +131,8 @@
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; installBtn.style.display='inline-block'; });
   installBtn.addEventListener('click', async () => { if (deferredPrompt){ deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt=null; installBtn.style.display='none'; }});
 
-  // Register SW (ignore errors on file:///)
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('service-worker.js').catch(()=>{});
-  }
+  if ('serviceWorker' in navigator) { navigator.serviceWorker.register('service-worker.js').catch(()=>{}); }
 
-  // ----- SFX (tiny placeholders) -----
   const SFX = {enabled:true, pick:new Audio(), drop:new Audio(), bump:new Audio(), horn:new Audio(), power:new Audio()};
   const blip = "data:audio/wav;base64,UklGRmYAAABXQVZFZm10IBIAAABAAEAQBQAAAwAAABsYWFmAAAAAAAAPwAAAP8AAP8AAAD/AP//AAD//wAA";
   SFX.pick.src=blip; SFX.drop.src=blip; SFX.bump.src=blip; SFX.horn.src=blip; SFX.power.src=blip;
@@ -144,14 +140,12 @@
 
   function showToast(msg, ms=1100){ toast.textContent=msg; toast.classList.add('show'); clearTimeout(showToast._t); showToast._t=setTimeout(()=>toast.classList.remove('show'), ms); }
 
-  // ----- Input -----
   const keys = new Set(); const hold = k => keys.has(k);
   addEventListener('keydown', e => {
     if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Space','KeyP','KeyR','KeyH'].includes(e.code) || e.key === ' '){ e.preventDefault(); }
     if (e.key === ' ') keys.add('Space'); else keys.add(e.code);
   });
   addEventListener('keyup', e => { if (e.key === ' ') keys.delete('Space'); else keys.delete(e.code); });
-
   document.querySelectorAll('.key[data-k]').forEach(el=>{
     const k=el.dataset.k; const set=v=>{ if(v){keys.add(k); el.classList.add('active');} else {keys.delete(k); el.classList.remove('active');}};
     const start=e=>{e.preventDefault();set(true)}; const end=e=>{e.preventDefault();set(false)};
@@ -159,8 +153,7 @@
     el.addEventListener('pointercancel',end); el.addEventListener('pointerleave',end);
   });
 
-  // ----- World -----
-  const rng=(a,b)=>a+Math.random()*(b-a); const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)); const TAU=Math.PI*2;
+  const rng=(a,b)=>a+Math.random()*(b-a); const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
   const COLORS = [
     {name:'Red', hue:5,  rack:'#ff6b6b'},
@@ -175,12 +168,10 @@
     freeze:0, magnet:0, shield:0, hornCooldown:0
   };
 
-  // Leaderboard (top 5)
   function getBoard(){ try{ return JSON.parse(localStorage.getItem('forklift_board')||'[]'); }catch{return []}}
   function setBoard(b){ try{ localStorage.setItem('forklift_board', JSON.stringify(b.slice(0,5))); }catch{} }
   function pushBoard(name, score, time){ const b=getBoard(); b.push({name,score,time,ts:Date.now()}); b.sort((a,b)=>b.score-a.score||b.time-a.time); setBoard(b); renderBoard(); }
 
-  // Persist best
   try { const raw=localStorage.getItem('forklift_best'); if (raw) world.best = JSON.parse(raw);} catch {}
   updateBestPill();
 
@@ -199,21 +190,10 @@
   }
 
   function pickColor(){ return COLORS[Math.floor(Math.random()*COLORS.length)]; }
-  function spawnPallet(y){
-    const col = pickColor();
-    return {type:'pallet', color:col, x:rng(-world.laneWidth*0.35, world.laneWidth*0.35), y, r:0.55, picked:false, hue: col.hue};
-  }
-  function spawnRack(y){
-    const col = pickColor();
-    const side = Math.random()<.5?-1:1;
-    return {type:'rack', color:col, x: side*(world.laneWidth*0.5-0.6), y, w:0.9, h:3.2, delivered:false};
-  }
+  function spawnPallet(y){ const col=pickColor(); return {type:'pallet', color:col, x:rng(-world.laneWidth*0.35, world.laneWidth*0.35), y, r:0.55, picked:false, hue: col.hue}; }
+  function spawnRack(y){ const col=pickColor(); const side = Math.random()<.5?-1:1; return {type:'rack', color:col, x: side*(world.laneWidth*0.5-0.6), y, w:0.9, h:3.2, delivered:false}; }
   function spawnObstacle(y){ return {type:'cone', x:rng(-world.laneWidth*0.4,world.laneWidth*0.4), y, r:0.5, vx:rng(-.2,.2), stunned:0}; }
-  function spawnPowerUp(y){
-    const kinds = ['magnet','freeze','shield'];
-    const k = kinds[Math.floor(Math.random()*kinds.length)];
-    return {type:'power', kind:k, x:rng(-world.laneWidth*0.35,world.laneWidth*0.35), y, r:0.5};
-  }
+  function spawnPowerUp(y){ const kinds=['magnet','freeze','shield']; const k=kinds[Math.floor(Math.random()*kinds.length)]; return {type:'power', kind:k, x:rng(-world.laneWidth*0.35,world.laneWidth*0.35), y, r:0.5}; }
 
   function reset(){
     Object.assign(world,{time:0,score:0,combo:1,loads:0,bgScroll:0,speedScale:1,gameOver:false,freeze:0,magnet:0,shield:0,hornCooldown:0});
@@ -228,15 +208,12 @@
   resetBtn.onclick=()=>{ reset(); pauseBtn.textContent='Pause'; };
   helpBtn.onclick=()=>{ showToast('Hold ▲ to move, ◀ ▶ steer. SPACE pick/drop. H horn to stun cones.',1800); };
 
-  // ----- Units / camera -----
   const metersPerPixel = ()=> (world.laneWidth * 1.6) / canvas.width;
   function toScreen(x,y){ const mpp=metersPerPixel(); const sx=canvas.width/2 + x/mpp; const sy=canvas.height*0.75 - y/mpp + world.bgScroll/mpp; return [sx,sy]; }
 
-  // ----- Collision -----
   const circleHit=(ax,ay,ar,bx,by,br)=>{const dx=ax-bx,dy=ay-by;return (dx*dx+dy*dy)<= (ar+br)*(ar+br)};
   const aabbHit=(ax,ay,aw,ah,bx,by,bw,bh)=> Math.abs(ax-bx)<(aw+bw)/2 && Math.abs(ay-by)<(ah+bh)/2;
 
-  // ----- Drawing -----
   function drawBackground(dt){
     const mpp = metersPerPixel();
     const slow = world.freeze>0 ? 0.35 : 0.8;
@@ -272,7 +249,6 @@
   function drawPowerUp(p){ const [sx,sy]=toScreen(p.x,p.y); const mpp=metersPerPixel(); const r=p.r/mpp; ctx.save(); ctx.translate(sx,sy); ctx.fillStyle = p.kind==='magnet'?'#60a5fa':p.kind==='freeze'?'#22d3ee':'#f472b6'; roundRect(-r,-r,r*2,r*2,10); ctx.fill(); ctx.fillStyle='#0b1222'; ctx.font=`${Math.round(r*1.3)}px system-ui`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(p.kind==='magnet'?'M':p.kind==='freeze'?'F':'S',0,0); ctx.restore(); }
   function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
 
-  // ----- Update loop -----
   let last=0;
   function loop(ts){
     if (!world.running) return;
@@ -310,14 +286,12 @@
     const cleanupY = player.y - 30;
     [pallets,racks,obstacles,powerups].forEach(arr=>{ for (let i=arr.length-1;i>=0;i--){ if (arr[i].y<cleanupY) arr.splice(i,1);} });
 
-    // Horn (stun cones)
     if (hold('KeyH') && world.hornCooldown===0){
       SFX.enabled && SFX.horn.play().catch(()=>{});
       world.hornCooldown = 4.0;
       obstacles.forEach(o=>{ if (Math.abs(o.y-player.y)<12) o.stunned = 2.2; });
     }
 
-    // Obstacle motion
     obstacles.forEach(o=>{
       if (o.stunned>0){ o.stunned-=dt; return; }
       const speed = world.freeze>0 ? 0.2 : 1;
@@ -326,19 +300,17 @@
       if (o.x<-border||o.x>border) o.vx*=-1;
     });
 
-    // Pick / drop
     const pickPressed = hold('Space');
     if (pickPressed && !step._pickHeld){
       if (!player.carrying){
-        // near pallet (magnet increases pickup radius)
         let radius = 0.9 + (world.magnet>0 ? 0.8 : 0);
-        const p = pallets.find(p=>!p.picked && circleHit(player.x,player.y,radius, p.x,p.y, p.r));
+        const p = pallets.find(p=>!p.picked && ( (player.x-p.x)**2 + (player.y-p.y)**2 ) <= (radius+p.r)**2 );
         if (p){
           p.picked=true; player.carrying=true; player.cargo=p; world.combo=Math.min(world.combo+1,5);
           SFX.enabled && SFX.pick.play().catch(()=>{}); showToast(`Picked ${p.color.name}! Deliver to ${p.color.name} rack →`,1100);
         }
       } else {
-        const rk = racks.find(rk=>!rk.delivered && aabbHit(player.x,player.y,1.6,2.2, rk.x,rk.y, rk.w, rk.h));
+        const rk = racks.find(rk=>!rk.delivered && Math.abs(player.x-rk.x)<(1.6+rk.w)/2 && Math.abs(player.y-rk.y)<(2.2+rk.h)/2);
         if (rk){
           const match = rk.color.name===player.cargo.color.name;
           let gained = Math.round(60*world.combo + player.speed*2);
@@ -351,10 +323,9 @@
     }
     if (!pickPressed) step._pickHeld=false;
 
-    // Power-up collection
     for (let i=powerups.length-1;i>=0;i--){
       const pu=powerups[i];
-      if (circleHit(player.x,player.y,1.0, pu.x,pu.y, pu.r)){
+      if ( (player.x-pu.x)**2 + (player.y-pu.y)**2 <= (1.0+pu.r)**2 ){
         if (pu.kind==='magnet') world.magnet=10;
         if (pu.kind==='freeze') world.freeze=6;
         if (pu.kind==='shield') world.shield=8;
@@ -363,21 +334,18 @@
       }
     }
 
-    // Collisions
     player.invulnerable = Math.max(0, player.invulnerable - dt);
     for (const o of obstacles){
-      if (circleHit(player.x,player.y,0.8, o.x,o.y, o.r)){
+      if ( (player.x-o.x)**2 + (player.y-o.y)**2 <= (0.8+o.r)**2 ){
         if (world.shield>0){ world.shield=0; player.invulnerable=1; SFX.enabled && SFX.bump.play().catch(()=>{}); continue; }
         SFX.enabled && SFX.bump.play().catch(()=>{});
         endRun(); return;
       }
     }
 
-    // Difficulty ramp
     world.speedScale = 1 + Math.min(1.2, world.time/90);
     player.maxSpeed = 10 + world.time*0.05;
 
-    // HUD
     timeV.textContent = fmtTime(world.time);
     scoreV.textContent = world.score.toString();
     comboV.textContent = 'x'+world.combo;
@@ -387,7 +355,6 @@
     frzChip.textContent = 'Freeze: ' + (world.freeze>0? (world.freeze|0)+'s':'—');
     shdChip.textContent = 'Shield: ' + (world.shield>0? (world.shield|0)+'s':'—');
 
-    // Save best
     if (world.time > world.best.t || world.score > world.best.score){
       world.best = {t:world.time, score: world.score};
       try { localStorage.setItem('forklift_best', JSON.stringify(world.best)); } catch {}
@@ -410,10 +377,8 @@
   function fmtTime(t){ const m=Math.floor(t/60), s=Math.floor(t%60); return (m<10?'0':'')+m+':'+(s<10?'0':'')+s; }
   function updateBestPill(){ bestPill.textContent = `Best: ${fmtTime(world.best.t||0)} | ${world.best.score||0}`; }
 
-  // Keyboard shortcuts
   addEventListener('keydown', e=>{ if (e.code==='KeyP') pauseBtn.click(); if (e.code==='KeyR') resetBtn.click(); });
 
-  // ----- Modal & leaderboard -----
   const modal = document.createElement('div'); modal.className='modal';
   modal.innerHTML = `
     <div class="panel">
@@ -436,14 +401,14 @@
     </div>`;
   document.body.appendChild(modal);
   function renderBoard(){
-    const list=$('#boardList'); list.innerHTML='';
-    getBoard().forEach((e,i)=>{ const li=document.createElement('li'); li.textContent = `${e.score} pts — ${fmtTime(e.time)}`; list.appendChild(li); });
+    const list=document.getElementById('boardList'); list.innerHTML='';
+    (getBoard()).forEach((e,i)=>{ const li=document.createElement('li'); li.textContent = `${e.score} pts — ${fmtTime(e.time)}`; list.appendChild(li); });
   }
   function openModal(){ modal.style.display='flex'; renderBoard(); }
   function closeModal(){ modal.style.display='none'; }
-  $('#dismissBtn').onclick=closeModal;
-  $('#againBtn').onclick=()=>{ reset(); pauseBtn.textContent='Pause'; };
-  $('#shareBtn').onclick=async()=>{
+  document.getElementById('dismissBtn').onclick=closeModal;
+  document.getElementById('againBtn').onclick=()=>{ reset(); pauseBtn.textContent='Pause'; };
+  document.getElementById('shareBtn').onclick=async()=>{
     const text=`Forklift Runner — ${scoreV.textContent} pts in ${timeV.textContent}!`;
     if (navigator.share) { try{ await navigator.share({text, title:'Forklift Runner'});}catch{} } else { navigator.clipboard.writeText(text).then(()=>showToast('Copied to clipboard')); }
   }
@@ -452,12 +417,11 @@
     world.running=false; world.gameOver=true;
     const score=world.score, time=world.time; const name='You';
     pushBoard(name,score,time);
-    $('#modalTitle').textContent='Run Over';
-    $('#summary').innerHTML=`<div class="pill" style="display:inline-block;margin-bottom:.5rem">Score: <b>${score}</b> • Time: <b>${fmtTime(time)}</b> • Loads: <b>${world.loads}</b></div>`;
+    document.getElementById('modalTitle').textContent='Run Over';
+    document.getElementById('summary').innerHTML=`<div class="pill" style="display:inline-block;margin-bottom:.5rem">Score: <b>${score}</b> • Time: <b>${fmtTime(time)}</b> • Loads: <b>${world.loads}</b></div>`;
     openModal();
   }
 
-  // Start
   reset(); requestAnimationFrame(loop);
 })();
 </script>
