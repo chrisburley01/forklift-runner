@@ -1,4 +1,4 @@
-const CACHE = 'forklift-v1';
+const CACHE = 'forklift-v3';
 const ASSETS = [
   './',
   './index.html',
