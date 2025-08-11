@@ -1,18 +1,62 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
-<link rel="manifest" href="manifest.json">
-<link rel="icon" href="icons/icon-192.png">
-<meta name="theme-color" content="#0b0f15">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Forklift Runner</title>
+<link rel="manifest" href="manifest.json">
 <style>
-  :root { color-scheme: dark; --bg:#0b0f15; --panel:#121826; --accent:#00d084; --muted:#7a8aa0; --warn:#ffb020; --danger:#ff4d4f; }
-  html,body{height:100%;margin:0;background:var(--bg);font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-  #wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr auto;gap:.5rem;padding-bottom:env(safe-area-inset-bottom)}
-  header,footer{display:flex;align-items:center;justify-content:space-between;padding:.6rem calc(.9rem + env(safe-area-inset-right));padding-left:calc(.9rem + env(safe-area-inset-left));background:linear-gradient(180deg,#111827,#0e1522);box-shadow:0 6px 24px rgba(0,0,0,.35);z-index:3}
-  header h1{margin:0;font-size:1rem;font-weight:700;letter-spacing:.4px;color:#e6edf7}
-  header .right{display:flex;gap:.4rem;align-items:center}
-  .pill{background:#0f1729;border:1px solid #1f2a44;color:#c8d5ea;padding:.35rem .6rem;border-radius:999px;font-size:.8rem}
-  .btn{appearance:none;border:1px solid #22304d;background:#0f1729;color:#e6edf7;padding:.5rem .75rem
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0d0d0d;
+    overflow: hidden;
+    height: 100%;
+    touch-action: none;
+    color: white;
+    font-family: sans-serif;
+  }
+  #gameCanvas {
+    display: block;
+    background: #222;
+    margin: 0 auto;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// Basic forklift runner demo loop
+let forkliftX = 50;
+let forkliftY = canvas.height / 2;
+let speed = 3;
+
+function drawForklift(x, y) {
+  ctx.fillStyle = 'yellow';
+  ctx.fillRect(x, y, 50, 30);
+  ctx.fillStyle = 'black';
+  ctx.fillRect(x + 35, y + 5, 10, 20);
+}
+
+function gameLoop() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  forkliftX += speed;
+  if (forkliftX > canvas.width) forkliftX = -50;
+  drawForklift(forkliftX, forkliftY);
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>
